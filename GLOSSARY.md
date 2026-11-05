@@ -13,7 +13,7 @@ The repository whose pull request is being reviewed; it is the sole source of al
 _Avoid_: Host repo, consumer repo, client repo
 
 **Review Config**:
-The complete, explicit definition of how reviews run for a Target Repository — models, effort levels, Reviewers and their responsibilities, tier thresholds, Excluded and Sensitive Paths, Verdict permissions, and Eval settings. Nothing is inherited from outside it.
+The complete, explicit definition of how reviews run for a Target Repository - models, effort levels, Reviewers and their responsibilities, tier thresholds, Excluded and Sensitive Paths, Verdict permissions, and Eval settings. Nothing is inherited from outside it.
 _Avoid_: Settings, defaults, profile
 
 ### Findings
@@ -55,7 +55,7 @@ _Avoid_: Negative case, control PR
 ### Tiering
 
 **Review Tier**:
-The level of review a pull request receives — **Trivial**, **Light**, or **Full** — determining which reviewers run. Chosen by whichever of files-changed or lines-changed indicates the higher tier.
+The level of review a pull request receives - **Trivial**, **Light**, or **Full** - determining which reviewers run. Chosen by whichever of files-changed or lines-changed indicates the higher tier.
 _Avoid_: Risk tier, review size, Lite
 
 **Excluded Path**:

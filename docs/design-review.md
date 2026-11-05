@@ -1,14 +1,16 @@
-# LARP — Engineering Design (first draft)
+# LARP Review - Engineering Design (first draft)
 
-> Status: **Draft.** Assembled from the owner's decisions. Anything marked `TODO(owner)` is not decided yet and must not be treated as settled.
+> Status: **Draft.**. Anything marked `TODO(owner)` is not decided yet and must not be treated as settled.
 >
 > Audience: engineers building **LARP** (primary) and teams deciding whether to adopt it.
+>
+> This is part 1 of 2. It covers reviewing pull requests. Part 2, [LARP Eval design](design-eval.md), covers the optional Eval that grades and tunes the Review Config.
 
 ## Summary
 
-**LARP** is an agentic code-review package. A **Target Repository** calls it from its GitHub workflows when a pull request is opened. LARP runs on the open-source OpenCode harness. A **Coordinator** agent picks the **Reviewers** for the PR's **Review Tier** and runs them. It then combines their **Findings** into one review with a **Verdict**, and that Verdict can block the merge.
+**LARP** (the Landscape Agentic Review Pipeline) is an agentic code-review package. A **Target Repository** calls it from its GitHub workflows when a pull request is opened. LARP runs on the open-source OpenCode harness. A **Coordinator** agent picks the **Reviewers** for the PR's **Review Tier** and runs them. It then combines their **Findings** into one review with a **Verdict**, and that Verdict can block the merge.
 
-All review behaviour comes from the **Review Config**, which lives in the Target Repository. LARP has no runtime defaults. An optional **Eval** grades the Review Config against expert-confirmed historical PRs. It can propose changes through **Tuning PRs** and propose new Eval Cases through **Case Proposal PRs**. Humans review and merge both kinds of PR.
+All review behavior comes from the **Review Config**, which lives in the Target Repository. LARP has no runtime defaults. The Review Config can be tuned by humans directly, or by Tuning PRs from the optional Eval ([LARP Eval design](design-eval.md)).
 
 Domain terms are defined in [GLOSSARY.md](../GLOSSARY.md) and used here exactly as defined there.
 
@@ -19,7 +21,6 @@ Domain terms are defined in [GLOSSARY.md](../GLOSSARY.md) and used here exactly 
 - Assign every PR a Review Tier (**Trivial**, **Light**, or **Full**) from the number of files and lines changed, using thresholds the Target Repository defines.
 - Produce one consolidated review per run, with a Verdict that can gate merging.
 - Change review behaviour only through PRs in the Target Repository, so behaviour can be audited and Eval results can be compared over time.
-- Offer an opt-in Eval that measures review quality against the Target Repository's own history and proposes Review Config changes.
 
 ## Non-goals
 
@@ -27,17 +28,16 @@ Domain terms are defined in [GLOSSARY.md](../GLOSSARY.md) and used here exactly 
 - **A remote control plane** for model overrides or config. Configuration comes only from the Target Repository.
 - **Automatic Re-review on push.** Re-review happens only when a human asks for it ([ADR 0003](adr/0003-gating-verdicts-on-demand-re-review.md)).
 - **Agent approvals that replace a required human approval** by default. Approving is opt-in, and the scaffold is block-only.
-- **Live-feedback Eval in v1**, meaning grading from reactions or thread resolution on real PRs. This is deferred to a later version.
 - **A "break glass" override command.** Overrides use GitHub's existing admin bypass.
-- **Letting the Eval change the Verdict Rubric, Excluded Paths, or Sensitive Paths.**
+- **PRs from forks.** See [Security and credentials](#security-and-credentials).
 
 ## Background and prior art
 
 - **Cloudflare, "Orchestrating AI Code Review at scale"** (<https://blog.cloudflare.com/ai-code-review/>). Built on OpenCode. A coordinator agent runs specialist reviewers, PRs are sorted into size-based tiers, noise is filtered, a Severity rubric drives the outcome, and later pushes are re-reviewed against earlier findings. LARP follows this model for the Coordinator/Reviewer split, tiering, Excluded Paths, the scaffolded Verdict Rubric, and how Re-review handles previous Findings. Where LARP differs:
   - Cloudflare uses a remote control plane for model overrides. LARP does not, because all configuration must come from the Target Repository.
-  - Cloudflare re-reviews on every push. LARP re-reviews only on request (ADR 0003).
+  - Cloudflare re-reviews on every push. LARP re-reviews only on request ([ADR 0003](adr/0003-gating-verdicts-on-demand-re-review.md)).
   - Cloudflare does not describe an eval loop. LARP has one.
-- **Anthropic, "Solving code review at Anthropic"** (<https://claude.dev/blog/solving-code-review-at-anthropic/>). Anthropic runs a daily eval built from past incidents, measures noise on PRs known to be clean, and puts "catch real bugs first". It also reports that agent-author/agent-reviewer loops ran for 50+ rounds, and advises that an agent's approval should not replace a required human approval. These points shaped the Eval objective (ADR 0002), on-demand Re-review (ADR 0003), and opt-in approvals.
+- **Anthropic, "Solving code review at Anthropic"** (<https://claude.dev/blog/solving-code-review-at-anthropic/>). Anthropic reports that agent-author/agent-reviewer loops ran for 50+ rounds, and advises that an agent's approval should not replace a required human approval. These points shaped on-demand Re-review ([ADR 0003](adr/0003-gating-verdicts-on-demand-re-review.md)) and opt-in approvals. Its influence on the Eval is covered in [LARP Eval design](design-eval.md).
 
 ## Glossary
 
@@ -47,7 +47,7 @@ See [GLOSSARY.md](../GLOSSARY.md). This document uses those terms exactly. For e
 
 LARP is a versioned package that the Target Repository's workflows call. LARP pins an exact OpenCode version. The Target Repository pins an exact LARP version. OpenCode was chosen for two reasons:
 
-1. The company requires an open-source harness.
+1. We wanted to use an open-source harness.
 2. OpenCode's server-first SDK can programmatically start concurrent child sessions, which the Coordinator needs in order to run Reviewers in parallel.
 
 ### Review flow
@@ -74,23 +74,6 @@ flowchart TD
     RUB --> POST[Post one consolidated review + Verdict]
 ```
 
-### Eval loop
-
-```mermaid
-flowchart TD
-    SCHED[Optional daily scheduled workflow<br/>in Target Repository] --> EVAL[Eval]
-    EVAL --> MINE[Mine historical PRs:<br/>human review comments, fix commits, reverts]
-    MINE --> CPR[Case Proposal PR<br/>proposed Eval Cases + Clean Cases]
-    CPR -->|expert edits and merges| CASES[(Confirmed Eval Cases<br/>in Target Repository)]
-    CASES --> RUN[Run candidate Review Configs<br/>against confirmed Eval Cases]
-    RUN --> SCORE{Recall up or held with lower cost/latency,<br/>AND noise under ceiling?}
-    SCORE -->|yes| TPR[Tuning PR with before/after Eval scores]
-    SCORE -->|no| NONE[No PR]
-    TPR -->|human reviews and merges| RCFG[Review Config]
-```
-
-> TODO(owner): Decide how the Eval generates the candidate Review Configs it compares (search strategy, how many candidates per run). Not covered by the decisions so far.
-
 ## Review flow
 
 1. A pull request event in the Target Repository triggers a workflow that calls the pinned LARP version. The workflow passes references to secret names, never the key values.
@@ -116,7 +99,7 @@ The Review Config is the complete definition of how reviews run for a Target Rep
 - Excluded Paths and Sensitive Paths.
 - Severities (critical, warning, suggestion) and the Verdict Rubric.
 - Verdict permissions: the **blocking mode** (blocking or advisory) and the approve opt-in.
-- Eval settings, including the noise ceiling.
+- Eval settings, including the noise ceiling (see [LARP Eval design](design-eval.md)).
 - Credential references, as secret names (e.g. `secrets.ANTHROPIC_API_KEY`).
 
 > TODO(owner): Decide the Review Config file format, location in the Target Repository, and schema.
@@ -133,7 +116,7 @@ The Review Config is the complete definition of how reviews run for a Target Rep
 
 - LARP pins an exact OpenCode version.
 - The Target Repository pins an exact LARP version.
-- Review behaviour changes only through a PR in the Target Repository. That can be a Review Config edit, a Tuning PR, or a bump of the pinned LARP version.
+- Review behaviour changes only through a PR in the Target Repository. That can be a Review Config edit, a Tuning PR (see [LARP Eval design](design-eval.md)), or a bump of the pinned LARP version.
 
 ## Tiering
 
@@ -142,7 +125,7 @@ The Review Config is the complete definition of how reviews run for a Target Rep
 - Thresholds are set in the Review Config.
 - **Excluded Paths** are file patterns that are neither counted for tiering nor shown to Reviewers. Examples are lockfiles, generated code, and minified assets. This follows Cloudflare's approach.
 - **Sensitive Paths** are directories where any change forces **Full**, whatever the size of the PR.
-- If a path matches both lists, **Excluded wins**. This is easy to reverse, so it has no ADR.
+- If a path matches both lists, **Excluded wins**.
 - The Review Config defines which Reviewers run on each tier, and how many.
 
 > TODO(owner): Decide the starter thresholds. **Proposed, not decided** (from Cloudflare): Trivial if ≤10 lines and ≤20 files; Light if ≤100 lines and ≤20 files; otherwise Full; >50 files always Full.
@@ -161,9 +144,9 @@ Each **Finding** has a **Severity**: **critical**, **warning**, or **suggestion*
 
 ### Verdict Rubric
 
-The **Verdict Rubric** lives in the Review Config. It maps the set of Findings, by Severity, to a **Verdict**. Only humans change it. A Tuning PR never does.
+The **Verdict Rubric** lives in the Review Config. It maps the set of Findings, by Severity, to a **Verdict**. Only humans change it.
 
-The scaffolded rubric follows Cloudflare's:
+The scaffolded rubric:
 
 | Findings | Verdict |
 |---|---|
@@ -185,9 +168,9 @@ The scaffolded rubric follows Cloudflare's:
   - **Require pull request reviews before merging.** Without this, a "request changes" review does not block.
   - **Restrict who can dismiss pull request reviews.** By default, anyone with write access, including the PR author, can dismiss LARP's blocking review.
 - Overrides use GitHub's existing admin bypass. There is no "break glass" command.
-- Approving is **opt-in** per Target Repository. It also requires the GitHub repository setting "Allow GitHub Actions to create and approve pull requests". Following Anthropic's guidance, an agent's approval should not replace a required human approval.
+- Approving is **opt-in** per Target Repository. It also requires the GitHub repository setting "Allow GitHub Actions to create and approve pull requests". An agent's approval should not replace a required human approval.
 
-GitHub treats a "request changes" review as blocking only when required-review rules are enabled **and** the reviewer's token has sufficient repository access. The bot's name does not matter. So the workflow's token needs write access to pull requests, and onboarding should include a check: open a test PR, let LARP block it, and confirm that GitHub reports "Changes have been requested" as the unmet requirement when someone tries to merge.
+GitHub treats a "request changes" review as blocking only when required-review rules are enabled **and** the reviewer's token has sufficient repository access. So the workflow's token needs write access to pull requests, and onboarding should include a check: open a test PR, let LARP block it, and confirm that GitHub reports "Changes have been requested" as the unmet requirement when someone tries to merge.
 
 ### Stale Verdicts
 
@@ -205,7 +188,7 @@ Both behaviours come from GitHub. A "request changes" review stays in force acro
 
 - **On demand only.** A human requests it. Pushes never trigger it automatically. The reason is to avoid runaway agent-author/agent-reviewer loops (Anthropic reported 50+ rounds on one PR) ([ADR 0003](adr/0003-gating-verdicts-on-demand-re-review.md)).
 - The Review Tier is **recalculated on the whole PR's current diff**.
-- The Re-review receives the **previous Findings**, following Cloudflare's model:
+- The Re-review receives the **previous Findings**:
   - A Finding that has been fixed has its thread resolved automatically.
   - A Finding that has not been fixed is emitted again.
   - A thread a human resolved stays resolved, unless the issue has materially worsened.
@@ -214,51 +197,6 @@ Both behaviours come from GitHub. A "request changes" review stays in force acro
 > TODO(owner): Decide the Re-review trigger mechanism (comment command, label, workflow_dispatch, etc.) and who may trigger it.
 >
 > TODO(owner): Define "materially worsened" and which agent decides it.
-
-## Eval
-
-### Scope and scheduling
-
-- **Opt-in and off by default.** It runs as an optional **daily scheduled GitHub workflow** in the Target Repository.
-- v1 grades against **historical PRs only**. Live feedback, such as reactions and thread resolution on real PRs, is deferred.
-
-### Eval Cases
-
-- An **Eval Case** is a historical PR paired with its **Expected Findings**. Expected Findings come from human review comments and from later evidence, such as follow-up fix commits and reverts.
-- A **Clean Case** is a historical PR with no Expected Findings. Candidates are proposed automatically, for example PRs merged at least N days ago with no revert, fix, or flag.
-- **Both kinds are proposed automatically, and neither counts until a human expert confirms it.** The expert confirms cases by editing and merging a **Case Proposal PR** that the Eval opens. Confirmed Eval Cases are stored in the Target Repository. This means the Eval cannot run without expert time.
-
-> TODO(owner): Decide the Eval Case storage format and location, and the Case Proposal PR format.
->
-> TODO(owner): Choose the starter Clean Case age N.
->
-> TODO(owner): Define how the Eval matches a produced Finding to an Expected Finding when grading (location tolerance, semantic match, who or what judges).
-
-### Objective
-
-Defined in [ADR 0002](adr/0002-eval-objective-recall-first.md):
-
-1. **Recall** of Expected Findings is the objective.
-2. **Noise**, meaning Findings on Clean Cases, has a **hard ceiling** set in the Review Config.
-3. **Cost and latency** only break ties.
-
-LARP does not use precision over all Eval Cases. Historical PRs contain real bugs that nobody caught, and those would be scored as false positives, which would push tuning toward missing bugs.
-
-> TODO(owner): Choose the starter noise ceiling and its unit (e.g. Findings per Clean Case, or share of Clean Cases with any Finding).
-
-### Tuning PRs
-
-- The Eval opens a **Tuning PR** only if recall improves, or holds while cost or latency falls, **and** noise stays under the ceiling.
-- A Tuning PR **may** change: tier thresholds, effort levels, Reviewer counts per tier, model choices, and Reviewer prompts.
-- A Tuning PR **may not** change: Excluded Paths, Sensitive Paths, or the Verdict Rubric.
-- Each Tuning PR should include **before and after Eval scores**.
-- A Tuning PR is reviewed and merged by humans like any other change to the Review Config.
-
-> TODO(owner): Decide whether a Tuning PR must itself be gated by an Eval run (e.g. a required check), beyond the scores the Eval reports.
-
-### Eval cost and credentials
-
-> TODO(owner): Decide how mining historical PRs handles credentials and rate or cost limits, and set the Eval cost budget.
 
 ## Security and credentials
 
@@ -279,30 +217,24 @@ LARP does not use precision over all Eval Cases. Historical PRs contain real bug
 - **Failing open.** A missing or invalid Review Config produces a non-blocking comment, not a block, so these PRs rely entirely on human review.
 - **Resilience.** Timeouts, model failback, and behaviour when a provider is down are not defined. Cloudflare uses circuit breakers and failback chains. Because Verdicts gate merges, a failed run could block or unblock PRs unexpectedly.
   > TODO(owner): Define timeouts, failback, and what Verdict (if any) is posted when a run fails.
-- **Author friction from Stale Verdicts.** Every fix to a blocked PR needs a manual Re-review request, which may annoy authors. This trade-off was accepted in ADR 0003.
-- **Expert time for the Eval.** No Eval Case counts without expert confirmation. If experts are not available, the Eval set will stay small and Tuning PRs will be poorly grounded.
-- **Recall bias in the Eval set.** Expected Findings come from issues people actually noticed, through human review comments, fixes, and reverts. Kinds of bugs that people miss are under-represented.
-- **Starter config drift.** Because there are no runtime defaults, improvements to the starter config never reach existing Target Repositories (ADR 0001).
+- **Author friction from Stale Verdicts.** Every fix to a blocked PR needs a manual Re-review request, which may annoy authors. This trade-off was accepted in [ADR 0003](adr/0003-gating-verdicts-on-demand-re-review.md).
+- **Starter config drift.** Because there are no runtime defaults, improvements to the starter config never reach existing Target Repositories ([ADR 0001](adr/0001-no-runtime-defaults.md)).
+
 
 ## Decisions
 
 | Decision | Record |
 |---|---|
 | No runtime defaults; the Review Config lives entirely in the Target Repository; scaffold once; exact version pinning | [ADR 0001](adr/0001-no-runtime-defaults.md) |
-| Eval objective is recall first, with a noise ceiling measured on Clean Cases; cost and latency break ties; Tuning PR scope is limited | [ADR 0002](adr/0002-eval-objective-recall-first.md) |
 | Verdicts gate merges; pushes make Verdicts stale; Re-review is on demand only | [ADR 0003](adr/0003-gating-verdicts-on-demand-re-review.md) |
-| OpenCode as the harness (open source; server-first SDK supports concurrent child sessions) | No ADR. > TODO(owner): decide whether this needs an ADR. |
-| Excluded Path takes precedence over Sensitive Path | No ADR (easy to reverse). |
+| OpenCode as the harness (open source; server-first SDK supports concurrent child sessions) | No decision record. > TODO(owner): decide whether this needs one. |
+| Excluded Path takes precedence over Sensitive Path | No decision record (easy to reverse). |
 
 ## Open questions
 
 1. Re-review trigger mechanism, and who may trigger it.
 2. Review Config file format, location, and schema.
-3. Case Proposal PR and Eval Case storage format and location.
-4. Starter tier thresholds (Cloudflare's numbers proposed, not decided) and starter Reviewer roster.
-5. Starter noise ceiling (and its unit) and Clean Case age N.
-6. How mining historical PRs for the Eval handles credentials and cost limits; Eval cost budget.
-7. Timeouts, model failback, and resilience behaviour, including what Verdict a failed run produces.
-8. Prompt-injection handling for content the PR controls.
-9. Whether a Tuning PR must itself be gated by an Eval run.
-10. Items raised while drafting (see the inline TODOs): what "approve" rows post when approving is off; Finding fields; Coordinator filtering criteria; how Findings are matched to Expected Findings; how Eval candidates are generated; full token permissions.
+3. Starter tier thresholds (Cloudflare's numbers proposed, not decided) and starter Reviewer roster.
+4. Timeouts, model failback, and resilience behaviour, including what Verdict a failed run produces.
+5. Prompt-injection handling for content the PR controls.
+6. Items raised while drafting (see the inline TODOs): what "approve" rows post when approving is off; Finding fields; Coordinator filtering criteria; full token permissions.
